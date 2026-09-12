@@ -1,5 +1,6 @@
 import logging
 import os
+import ccxt
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -10,14 +11,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get the bot token safely
+# Get secrets from environment
 TOKEN = os.getenv("BOT_TOKEN")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
 if not TOKEN:
-    logger.error("BOT_TOKEN is not set!")
-    raise ValueError("BOT_TOKEN environment variable is missing")
+    raise ValueError("BOT_TOKEN is missing")
 
-# Simple memory for the bot (will improve later)
+# Simple bot memory
 bot_state = {
     "auto_trading": False,
     "mode": "Paper Trading",
@@ -26,32 +28,46 @@ bot_state = {
     "confidence_threshold": 70
 }
 
+# Connect to Bybit (Spot only)
+exchange = None
+try:
+    exchange = ccxt.bybit({
+        "apiKey": BYBIT_API_KEY,
+        "secret": BYBIT_API_SECRET,
+        "enableRateLimit": True,
+        "options": {
+            "defaultType": "spot"
+        }
+    })
+    logger.info("Connected to Bybit successfully")
+except Exception as e:
+    logger.error(f"Failed to connect to Bybit: {e}")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome message"""
     user = update.effective_user
     await update.message.reply_text(
         f"Hello {user.first_name}!\n\n"
-        "I am your Spot Trading Bot (Stage 2).\n\n"
-        "Current mode: Paper Trading (fake money)\n\n"
-        "Available commands:\n"
-        "/start - Show this message\n"
-        "/status - Show bot status\n"
-        "/auto on - Turn auto-trading ON\n"
-        "/auto off - Turn auto-trading OFF\n"
-        "/pairs - Show current watchlist"
+        "I am your Spot Trading Bot (Stage 3).\n\n"
+        "Mode: Paper Trading (safe)\n\n"
+        "Commands:\n"
+        "/start - This message\n"
+        "/status - Bot status\n"
+        "/auto on|off - Turn auto trading on/off\n"
+        "/pairs - Show watchlist\n"
+        "/price BTC - Get current price (example)"
     )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current status"""
     auto_status = "ON ✅" if bot_state["auto_trading"] else "OFF ❌"
+    connection = "Connected ✅" if exchange else "Not connected ❌"
 
     message = (
         "📊 Bot Status\n\n"
         f"• Mode: {bot_state['mode']}\n"
         f"• Auto-trading: {auto_status}\n"
-        f"• Exchange: Bybit (not connected yet)\n"
+        f"• Bybit connection: {connection}\n"
         f"• Watchlist: {', '.join(bot_state['watchlist'])}\n"
         f"• Risk per trade: {bot_state['risk_percent']}%\n"
         f"• Confidence threshold: {bot_state['confidence_threshold']}\n"
@@ -62,14 +78,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Turn auto-trading on or off"""
     if not context.args:
         current = "ON" if bot_state["auto_trading"] else "OFF"
         await update.message.reply_text(
             f"Auto-trading is currently {current}.\n\n"
-            "Use:\n"
-            "/auto on\n"
-            "/auto off"
+            "Use:\n/auto on\n/auto off"
         )
         return
 
@@ -77,44 +90,62 @@ async def auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if command == "on":
         bot_state["auto_trading"] = True
-        await update.message.reply_text("🤖 Auto-trading is now ON.\n\n(Still Paper Trading mode)")
-        logger.info("Auto-trading turned ON")
+        await update.message.reply_text("🤖 Auto-trading is now ON.\n(Paper Trading mode)")
     elif command == "off":
         bot_state["auto_trading"] = False
         await update.message.reply_text("🤖 Auto-trading is now OFF.")
-        logger.info("Auto-trading turned OFF")
     else:
         await update.message.reply_text("Please use /auto on or /auto off")
 
 
 async def pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the current watchlist"""
     watchlist = ", ".join(bot_state["watchlist"])
-    await update.message.reply_text(
-        f"Current watchlist:\n{watchlist}\n\n"
-        "We will add the ability to change it in the next stage."
-    )
+    await update.message.reply_text(f"Current watchlist:\n{watchlist}")
+
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Get current price of a coin"""
+    if not context.args:
+        await update.message.reply_text("Please use like this:\n/price BTC")
+        return
+
+    if not exchange:
+        await update.message.reply_text("Bybit is not connected yet.")
+        return
+
+    symbol = context.args[0].upper() + "/USDT"
+
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        last_price = ticker["last"]
+        await update.message.reply_text(
+            f"💰 Current price of {symbol}:\n\n"
+            f"${last_price}"
+        )
+    except Exception as e:
+        logger.error(f"Price error: {e}")
+        await update.message.reply_text(
+            f"Sorry, I could not get the price for {symbol}.\n"
+            "Make sure you typed a valid coin (example: BTC, ETH, SOL)"
+        )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """Log the error and send a telegram message to notify the developer."""
-    logger.error(f"Exception while handling an update: {context.error}")
+    logger.error(f"Exception: {context.error}")
 
 
 def main():
-    """Start the bot"""
     application = Application.builder().token(TOKEN).build()
 
-    # Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("auto", auto))
     application.add_handler(CommandHandler("pairs", pairs))
+    application.add_handler(CommandHandler("price", price))
 
-    # Error handler
     application.add_error_handler(error_handler)
 
-    logger.info("Bot is starting (Stage 2)...")
+    logger.info("Bot starting (Stage 3 - Bybit connected)...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
