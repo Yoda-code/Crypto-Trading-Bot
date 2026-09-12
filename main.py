@@ -11,12 +11,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
 if not TOKEN:
     raise ValueError("BOT_TOKEN is missing")
 
+# Bot memory
 bot_state = {
     "auto_trading": False,
     "mode": "Paper Trading",
@@ -25,30 +24,7 @@ bot_state = {
     "confidence_threshold": 70
 }
 
-# Try to connect with API keys
-exchange = None
-connection_error = "No error yet"
-
-try:
-    if BYBIT_API_KEY and BYBIT_API_SECRET:
-        exchange = ccxt.bybit({
-            "apiKey": BYBIT_API_KEY,
-            "secret": BYBIT_API_SECRET,
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot"}
-        })
-        exchange.load_markets()
-        # Test the connection
-        exchange.fetch_balance()
-        logger.info("Bybit connected with API keys")
-    else:
-        connection_error = "API keys are missing in Railway"
-except Exception as e:
-    connection_error = str(e)
-    logger.error(f"Bybit connection failed: {connection_error}")
-    exchange = None
-
-# Public exchange (for prices only - always works)
+# Public Bybit connection (for prices only)
 public_exchange = ccxt.bybit({
     "enableRateLimit": True,
     "options": {"defaultType": "spot"}
@@ -59,35 +35,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
         f"Hello {user.first_name}!\n\n"
-        "Spot Trading Bot (Stage 3)\n"
-        "Mode: Paper Trading\n\n"
+        "Spot Trading Bot\n"
+        "Mode: Paper Trading (safe)\n\n"
         "Commands:\n"
-        "/start\n"
-        "/status\n"
-        "/auto on|off\n"
-        "/pairs\n"
-        "/price BTC"
+        "/start - Welcome message\n"
+        "/status - Bot status\n"
+        "/auto on|off - Turn auto-trading on or off\n"
+        "/pairs - Show watchlist\n"
+        "/price BTC - Get current price"
     )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     auto_status = "ON ✅" if bot_state["auto_trading"] else "OFF ❌"
-    connection = "Connected ✅" if exchange else "Not connected ❌"
 
     message = (
         "📊 Bot Status\n\n"
         f"• Mode: {bot_state['mode']}\n"
         f"• Auto-trading: {auto_status}\n"
-        f"• Bybit connection: {connection}\n"
+        f"• Price data: Public (working)\n"
         f"• Watchlist: {', '.join(bot_state['watchlist'])}\n"
         f"• Risk per trade: {bot_state['risk_percent']}%\n"
         f"• Confidence threshold: {bot_state['confidence_threshold']}\n"
         f"• Open positions: 0\n\n"
+        "Paper Trading mode – no real money is used."
     )
-
-    if not exchange:
-        message += f"Connection error:\n{connection_error}"
-
     await update.message.reply_text(message)
 
 
@@ -95,25 +67,26 @@ async def auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         current = "ON" if bot_state["auto_trading"] else "OFF"
         await update.message.reply_text(
-            f"Auto-trading is currently {current}.\n\nUse:\n/auto on\n/auto off"
+            f"Auto-trading is currently {current}.\n\n"
+            "Use:\n/auto on\n/auto off"
         )
         return
 
     command = context.args[0].lower()
+
     if command == "on":
         bot_state["auto_trading"] = True
-        await update.message.reply_text("🤖 Auto-trading is now ON (Paper mode)")
+        await update.message.reply_text("🤖 Auto-trading is now ON\n(Paper Trading mode)")
     elif command == "off":
         bot_state["auto_trading"] = False
         await update.message.reply_text("🤖 Auto-trading is now OFF")
     else:
-        await update.message.reply_text("Use /auto on or /auto off")
+        await update.message.reply_text("Please use /auto on or /auto off")
 
 
 async def pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"Current watchlist:\n{', '.join(bot_state['watchlist'])}"
-    )
+    watchlist = ", ".join(bot_state["watchlist"])
+    await update.message.reply_text(f"Current watchlist:\n{watchlist}")
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,12 +100,15 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         ticker = public_exchange.fetch_ticker(symbol)
         last_price = ticker.get("last")
+
         await update.message.reply_text(
-            f"💰 {symbol}\n\nPrice: ${last_price}"
+            f"💰 {symbol}\n\n"
+            f"Price: ${last_price}"
         )
     except Exception as e:
         await update.message.reply_text(
-            f"Error getting price:\n{str(e)}"
+            f"Sorry, could not get the price for {symbol}.\n"
+            f"Error: {str(e)}"
         )
 
 
@@ -150,7 +126,7 @@ def main():
     application.add_handler(CommandHandler("price", price))
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting...")
+    logger.info("Bot starting with public price data...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
