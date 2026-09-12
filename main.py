@@ -1,6 +1,6 @@
 import logging
 import os
-import ccxt
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -23,11 +23,19 @@ bot_state = {
     "confidence_threshold": 70
 }
 
-# Use Binance for public prices (more reliable from Railway)
-public_exchange = ccxt.binance({
-    "enableRateLimit": True,
-    "options": {"defaultType": "spot"}
-})
+# Simple mapping for CoinGecko
+COIN_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "BNB": "binancecoin",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche-2",
+    "DOT": "polkadot",
+    "LINK": "chainlink"
+}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -52,7 +60,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 Bot Status\n\n"
         f"• Mode: {bot_state['mode']}\n"
         f"• Auto-trading: {auto_status}\n"
-        f"• Price data: Binance (public)\n"
+        f"• Price data: CoinGecko (public)\n"
         f"• Watchlist: {', '.join(bot_state['watchlist'])}\n"
         f"• Risk per trade: {bot_state['risk_percent']}%\n"
         f"• Confidence threshold: {bot_state['confidence_threshold']}\n"
@@ -94,20 +102,32 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     coin = context.args[0].upper()
-    symbol = f"{coin}/USDT"
+
+    if coin not in COIN_IDS:
+        await update.message.reply_text(
+            f"Sorry, I don't have {coin} in my list yet.\n"
+            "Try: BTC, ETH, SOL, BNB, XRP, ADA, DOGE"
+        )
+        return
+
+    coin_id = COIN_IDS[coin]
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
 
     try:
-        ticker = public_exchange.fetch_ticker(symbol)
-        last_price = ticker.get("last")
+        response = requests.get(url, timeout=10)
+        data = response.json()
 
-        await update.message.reply_text(
-            f"💰 {symbol}\n\n"
-            f"Price: ${last_price}"
-        )
+        if coin_id in data and "usd" in data[coin_id]:
+            price = data[coin_id]["usd"]
+            await update.message.reply_text(
+                f"💰 {coin}/USDT\n\n"
+                f"Price: ${price}"
+            )
+        else:
+            await update.message.reply_text(f"Could not find price for {coin}")
     except Exception as e:
         await update.message.reply_text(
-            f"Sorry, could not get the price for {symbol}.\n"
-            f"Error: {str(e)}"
+            f"Sorry, could not get the price.\nError: {str(e)}"
         )
 
 
@@ -125,7 +145,7 @@ def main():
     application.add_handler(CommandHandler("price", price))
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting with Binance public prices...")
+    logger.info("Bot starting with CoinGecko prices...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
