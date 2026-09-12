@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get secrets from environment
+# Get secrets
 TOKEN = os.getenv("BOT_TOKEN")
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
@@ -19,7 +19,7 @@ BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 if not TOKEN:
     raise ValueError("BOT_TOKEN is missing")
 
-# Simple bot memory
+# Bot memory
 bot_state = {
     "auto_trading": False,
     "mode": "Paper Trading",
@@ -28,7 +28,7 @@ bot_state = {
     "confidence_threshold": 70
 }
 
-# Connect to Bybit (Spot only)
+# Connect to Bybit
 exchange = None
 try:
     exchange = ccxt.bybit({
@@ -39,9 +39,12 @@ try:
             "defaultType": "spot"
         }
     })
-    logger.info("Connected to Bybit successfully")
+    # Load all markets so symbols work correctly
+    exchange.load_markets()
+    logger.info("Connected to Bybit and markets loaded")
 except Exception as e:
     logger.error(f"Failed to connect to Bybit: {e}")
+    exchange = None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,7 +58,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status - Bot status\n"
         "/auto on|off - Turn auto trading on/off\n"
         "/pairs - Show watchlist\n"
-        "/price BTC - Get current price (example)"
+        "/price BTC - Get current price"
     )
 
 
@@ -110,23 +113,31 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not exchange:
-        await update.message.reply_text("Bybit is not connected yet.")
+        await update.message.reply_text("Bybit is not connected.")
         return
 
-    symbol = context.args[0].upper() + "/USDT"
+    coin = context.args[0].upper()
+    symbol = f"{coin}/USDT"
 
     try:
         ticker = exchange.fetch_ticker(symbol)
-        last_price = ticker["last"]
+        last_price = ticker.get("last")
+
+        if last_price is None:
+            await update.message.reply_text(f"Could not find price for {symbol}")
+            return
+
         await update.message.reply_text(
             f"💰 Current price of {symbol}:\n\n"
             f"${last_price}"
         )
     except Exception as e:
-        logger.error(f"Price error: {e}")
+        # Show the real error so we can fix it
+        error_message = str(e)
+        logger.error(f"Price error: {error_message}")
         await update.message.reply_text(
-            f"Sorry, I could not get the price for {symbol}.\n"
-            "Make sure you typed a valid coin (example: BTC, ETH, SOL)"
+            f"Error getting price for {symbol}:\n\n"
+            f"{error_message}"
         )
 
 
@@ -145,7 +156,7 @@ def main():
 
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting (Stage 3 - Bybit connected)...")
+    logger.info("Bot starting (Stage 3 fixed)...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
