@@ -38,10 +38,6 @@ COIN_IDS = {
 
 
 def get_simple_score(coin: str):
-    """
-    Very simple first version of the Confidence Score.
-    We will improve this later with real EMA, RSI, volume, etc.
-    """
     coin = coin.upper()
     if coin not in COIN_IDS:
         return None, "Coin not supported yet"
@@ -54,14 +50,13 @@ def get_simple_score(coin: str):
         data = response.json()
 
         market_data = data.get("market_data", {})
-        price_change_24h = market_data.get("price_change_percentage_24h", 0)
-        price_change_7d = market_data.get("price_change_percentage_7d", 0)
-        price_change_30d = market_data.get("price_change_percentage_30d", 0)
+        price_change_24h = market_data.get("price_change_percentage_24h", 0) or 0
+        price_change_7d = market_data.get("price_change_percentage_7d", 0) or 0
+        price_change_30d = market_data.get("price_change_percentage_30d", 0) or 0
 
-        score = 50  # start from neutral
+        score = 50
         reasons = []
 
-        # Simple trend logic
         if price_change_30d > 5:
             score += 20
             reasons.append("Positive 30-day trend (+20)")
@@ -69,7 +64,6 @@ def get_simple_score(coin: str):
             score -= 15
             reasons.append("Negative 30-day trend (-15)")
 
-        # Momentum
         if price_change_7d > 3:
             score += 15
             reasons.append("Good 7-day momentum (+15)")
@@ -77,7 +71,6 @@ def get_simple_score(coin: str):
             score -= 10
             reasons.append("Weak 7-day momentum (-10)")
 
-        # Short-term
         if price_change_24h > 2:
             score += 10
             reasons.append("Strong 24h move (+10)")
@@ -85,7 +78,6 @@ def get_simple_score(coin: str):
             score -= 10
             reasons.append("Weak 24h move (-10)")
 
-        # Keep score between 0 and 100
         score = max(0, min(100, score))
 
         if not reasons:
@@ -109,8 +101,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status\n"
         "/auto on|off\n"
         "/pairs\n"
+        "/pairs BTC,ETH,SOL  ← change watchlist\n"
         "/price BTC\n"
-        "/score BTC  ← new"
+        "/score BTC"
     )
 
 
@@ -151,9 +144,51 @@ async def auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"Current watchlist:\n{', '.join(bot_state['watchlist'])}"
-    )
+    # If user just types /pairs → show current list
+    if not context.args:
+        watchlist = ", ".join(bot_state["watchlist"])
+        await update.message.reply_text(
+            f"Current watchlist:\n{watchlist}\n\n"
+            "To change it, type for example:\n"
+            "/pairs BTC,ETH,SOL"
+        )
+        return
+
+    # User wants to update the list
+    raw = " ".join(context.args)
+    # Replace common separators
+    raw = raw.replace(" ", ",").replace(";", ",")
+    coins = [c.strip().upper() for c in raw.split(",") if c.strip()]
+
+    if not coins:
+        await update.message.reply_text("Please provide at least one coin.\nExample: /pairs BTC,ETH,SOL")
+        return
+
+    # Keep only supported coins
+    valid_coins = []
+    invalid_coins = []
+
+    for coin in coins:
+        if coin in COIN_IDS:
+            valid_coins.append(coin)
+        else:
+            invalid_coins.append(coin)
+
+    if not valid_coins:
+        await update.message.reply_text(
+            "None of the coins you gave are supported yet.\n"
+            "Supported examples: BTC, ETH, SOL, BNB, XRP, ADA, DOGE"
+        )
+        return
+
+    bot_state["watchlist"] = valid_coins
+
+    message = f"✅ Watchlist updated!\n\nNew list:\n{', '.join(valid_coins)}"
+
+    if invalid_coins:
+        message += f"\n\nThese were ignored (not supported yet):\n{', '.join(invalid_coins)}"
+
+    await update.message.reply_text(message)
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,7 +198,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     coin = context.args[0].upper()
     if coin not in COIN_IDS:
-        await update.message.reply_text("Coin not supported yet. Try BTC, ETH, SOL...")
+        await update.message.reply_text("Coin not supported yet.")
         return
 
     coin_id = COIN_IDS[coin]
@@ -200,8 +235,7 @@ async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Score: {score_value}/100\n"
         f"Threshold: {bot_state['confidence_threshold']}\n"
         f"Decision: {decision}\n\n"
-        f"Reason: {reason}\n\n"
-        "Note: This is a simple first version. We will improve it."
+        f"Reason: {reason}"
     )
     await update.message.reply_text(message)
 
@@ -221,7 +255,7 @@ def main():
     application.add_handler(CommandHandler("score", score))
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting with simple Confidence Score...")
+    logger.info("Bot starting with editable watchlist...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
