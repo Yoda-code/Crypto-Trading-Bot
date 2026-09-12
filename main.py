@@ -23,7 +23,6 @@ bot_state = {
     "confidence_threshold": 70
 }
 
-# Simple mapping for CoinGecko
 COIN_IDS = {
     "BTC": "bitcoin",
     "ETH": "ethereum",
@@ -38,18 +37,80 @@ COIN_IDS = {
 }
 
 
+def get_simple_score(coin: str):
+    """
+    Very simple first version of the Confidence Score.
+    We will improve this later with real EMA, RSI, volume, etc.
+    """
+    coin = coin.upper()
+    if coin not in COIN_IDS:
+        return None, "Coin not supported yet"
+
+    coin_id = COIN_IDS[coin]
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+
+        market_data = data.get("market_data", {})
+        price_change_24h = market_data.get("price_change_percentage_24h", 0)
+        price_change_7d = market_data.get("price_change_percentage_7d", 0)
+        price_change_30d = market_data.get("price_change_percentage_30d", 0)
+
+        score = 50  # start from neutral
+        reasons = []
+
+        # Simple trend logic
+        if price_change_30d > 5:
+            score += 20
+            reasons.append("Positive 30-day trend (+20)")
+        elif price_change_30d < -5:
+            score -= 15
+            reasons.append("Negative 30-day trend (-15)")
+
+        # Momentum
+        if price_change_7d > 3:
+            score += 15
+            reasons.append("Good 7-day momentum (+15)")
+        elif price_change_7d < -3:
+            score -= 10
+            reasons.append("Weak 7-day momentum (-10)")
+
+        # Short-term
+        if price_change_24h > 2:
+            score += 10
+            reasons.append("Strong 24h move (+10)")
+        elif price_change_24h < -2:
+            score -= 10
+            reasons.append("Weak 24h move (-10)")
+
+        # Keep score between 0 and 100
+        score = max(0, min(100, score))
+
+        if not reasons:
+            reasons.append("Neutral market conditions")
+
+        return score, " | ".join(reasons)
+
+    except Exception as e:
+        logger.error(f"Score error: {e}")
+        return None, str(e)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
         f"Hello {user.first_name}!\n\n"
         "Spot Trading Bot\n"
-        "Mode: Paper Trading (safe)\n\n"
+        "Mode: Paper Trading\n\n"
         "Commands:\n"
-        "/start - Welcome message\n"
-        "/status - Bot status\n"
-        "/auto on|off - Turn auto-trading on or off\n"
-        "/pairs - Show watchlist\n"
-        "/price BTC - Get current price"
+        "/start\n"
+        "/status\n"
+        "/auto on|off\n"
+        "/pairs\n"
+        "/price BTC\n"
+        "/score BTC  ← new"
     )
 
 
@@ -60,12 +121,12 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 Bot Status\n\n"
         f"• Mode: {bot_state['mode']}\n"
         f"• Auto-trading: {auto_status}\n"
-        f"• Price data: CoinGecko (public)\n"
+        f"• Price data: CoinGecko\n"
         f"• Watchlist: {', '.join(bot_state['watchlist'])}\n"
         f"• Risk per trade: {bot_state['risk_percent']}%\n"
         f"• Confidence threshold: {bot_state['confidence_threshold']}\n"
         f"• Open positions: 0\n\n"
-        "Paper Trading mode – no real money is used."
+        "Paper Trading – no real money used."
     )
     await update.message.reply_text(message)
 
@@ -74,26 +135,25 @@ async def auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         current = "ON" if bot_state["auto_trading"] else "OFF"
         await update.message.reply_text(
-            f"Auto-trading is currently {current}.\n\n"
-            "Use:\n/auto on\n/auto off"
+            f"Auto-trading is currently {current}.\n\nUse:\n/auto on\n/auto off"
         )
         return
 
     command = context.args[0].lower()
-
     if command == "on":
         bot_state["auto_trading"] = True
-        await update.message.reply_text("🤖 Auto-trading is now ON\n(Paper Trading mode)")
+        await update.message.reply_text("🤖 Auto-trading is now ON (Paper mode)")
     elif command == "off":
         bot_state["auto_trading"] = False
         await update.message.reply_text("🤖 Auto-trading is now OFF")
     else:
-        await update.message.reply_text("Please use /auto on or /auto off")
+        await update.message.reply_text("Use /auto on or /auto off")
 
 
 async def pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    watchlist = ", ".join(bot_state["watchlist"])
-    await update.message.reply_text(f"Current watchlist:\n{watchlist}")
+    await update.message.reply_text(
+        f"Current watchlist:\n{', '.join(bot_state['watchlist'])}"
+    )
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -102,12 +162,8 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     coin = context.args[0].upper()
-
     if coin not in COIN_IDS:
-        await update.message.reply_text(
-            f"Sorry, I don't have {coin} in my list yet.\n"
-            "Try: BTC, ETH, SOL, BNB, XRP, ADA, DOGE"
-        )
+        await update.message.reply_text("Coin not supported yet. Try BTC, ETH, SOL...")
         return
 
     coin_id = COIN_IDS[coin]
@@ -116,19 +172,38 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = requests.get(url, timeout=10)
         data = response.json()
-
-        if coin_id in data and "usd" in data[coin_id]:
-            price = data[coin_id]["usd"]
-            await update.message.reply_text(
-                f"💰 {coin}/USDT\n\n"
-                f"Price: ${price}"
-            )
-        else:
-            await update.message.reply_text(f"Could not find price for {coin}")
+        price_value = data[coin_id]["usd"]
+        await update.message.reply_text(f"💰 {coin}/USDT\n\nPrice: ${price_value}")
     except Exception as e:
-        await update.message.reply_text(
-            f"Sorry, could not get the price.\nError: {str(e)}"
-        )
+        await update.message.reply_text(f"Error: {str(e)}")
+
+
+async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Example:\n/score BTC")
+        return
+
+    coin = context.args[0].upper()
+    score_value, reason = get_simple_score(coin)
+
+    if score_value is None:
+        await update.message.reply_text(f"Could not calculate score.\n{reason}")
+        return
+
+    if score_value >= bot_state["confidence_threshold"]:
+        decision = "✅ PASS – would consider a trade"
+    else:
+        decision = "❌ FAIL – score too low"
+
+    message = (
+        f"📈 Confidence Score for {coin}\n\n"
+        f"Score: {score_value}/100\n"
+        f"Threshold: {bot_state['confidence_threshold']}\n"
+        f"Decision: {decision}\n\n"
+        f"Reason: {reason}\n\n"
+        "Note: This is a simple first version. We will improve it."
+    )
+    await update.message.reply_text(message)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -143,9 +218,10 @@ def main():
     application.add_handler(CommandHandler("auto", auto))
     application.add_handler(CommandHandler("pairs", pairs))
     application.add_handler(CommandHandler("price", price))
+    application.add_handler(CommandHandler("score", score))
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting with CoinGecko prices...")
+    logger.info("Bot starting with simple Confidence Score...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
