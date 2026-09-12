@@ -15,7 +15,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN is missing")
 
-# Bot memory
 bot_state = {
     "auto_trading": False,
     "mode": "Paper Trading",
@@ -24,8 +23,8 @@ bot_state = {
     "confidence_threshold": 70
 }
 
-# Public Bybit connection (for prices only)
-public_exchange = ccxt.bybit({
+# Use Binance for public prices (more reliable from Railway)
+public_exchange = ccxt.binance({
     "enableRateLimit": True,
     "options": {"defaultType": "spot"}
 })
@@ -53,7 +52,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 Bot Status\n\n"
         f"• Mode: {bot_state['mode']}\n"
         f"• Auto-trading: {auto_status}\n"
-        f"• Price data: Public (working)\n"
+        f"• Price data: Binance (public)\n"
         f"• Watchlist: {', '.join(bot_state['watchlist'])}\n"
         f"• Risk per trade: {bot_state['risk_percent']}%\n"
         f"• Confidence threshold: {bot_state['confidence_threshold']}\n"
@@ -126,7 +125,7 @@ def main():
     application.add_handler(CommandHandler("price", price))
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting with public price data...")
+    logger.info("Bot starting with Binance public prices...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
