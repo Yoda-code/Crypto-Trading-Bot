@@ -101,7 +101,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status\n"
         "/auto on|off\n"
         "/pairs\n"
-        "/pairs BTC,ETH,SOL  ← change watchlist\n"
+        "/pairs BTC,ETH,SOL\n"
+        "/risk 1\n"
+        "/threshold 70\n"
         "/price BTC\n"
         "/score BTC"
     )
@@ -144,27 +146,22 @@ async def auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # If user just types /pairs → show current list
     if not context.args:
         watchlist = ", ".join(bot_state["watchlist"])
         await update.message.reply_text(
             f"Current watchlist:\n{watchlist}\n\n"
-            "To change it, type for example:\n"
-            "/pairs BTC,ETH,SOL"
+            "To change it:\n/pairs BTC,ETH,SOL"
         )
         return
 
-    # User wants to update the list
     raw = " ".join(context.args)
-    # Replace common separators
     raw = raw.replace(" ", ",").replace(";", ",")
     coins = [c.strip().upper() for c in raw.split(",") if c.strip()]
 
     if not coins:
-        await update.message.reply_text("Please provide at least one coin.\nExample: /pairs BTC,ETH,SOL")
+        await update.message.reply_text("Example: /pairs BTC,ETH,SOL")
         return
 
-    # Keep only supported coins
     valid_coins = []
     invalid_coins = []
 
@@ -175,25 +172,61 @@ async def pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invalid_coins.append(coin)
 
     if not valid_coins:
-        await update.message.reply_text(
-            "None of the coins you gave are supported yet.\n"
-            "Supported examples: BTC, ETH, SOL, BNB, XRP, ADA, DOGE"
-        )
+        await update.message.reply_text("No supported coins found.")
         return
 
     bot_state["watchlist"] = valid_coins
 
     message = f"✅ Watchlist updated!\n\nNew list:\n{', '.join(valid_coins)}"
-
     if invalid_coins:
-        message += f"\n\nThese were ignored (not supported yet):\n{', '.join(invalid_coins)}"
+        message += f"\n\nIgnored: {', '.join(invalid_coins)}"
 
     await update.message.reply_text(message)
 
 
+async def risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            f"Current risk per trade: {bot_state['risk_percent']}%\n\n"
+            "To change it:\n/risk 1\n/risk 0.5"
+        )
+        return
+
+    try:
+        value = float(context.args[0].replace("%", ""))
+        if value <= 0 or value > 10:
+            await update.message.reply_text("Please choose a risk between 0.1 and 10.")
+            return
+
+        bot_state["risk_percent"] = value
+        await update.message.reply_text(f"✅ Risk per trade updated to {value}%")
+    except ValueError:
+        await update.message.reply_text("Please enter a number.\nExample: /risk 1")
+
+
+async def threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            f"Current confidence threshold: {bot_state['confidence_threshold']}\n\n"
+            "To change it:\n/threshold 70\n/threshold 80"
+        )
+        return
+
+    try:
+        value = int(context.args[0])
+        if value < 50 or value > 95:
+            await update.message.reply_text("Please choose a threshold between 50 and 95.")
+            return
+
+        bot_state["confidence_threshold"] = value
+        await update.message.reply_text(f"✅ Confidence threshold updated to {value}")
+    except ValueError:
+        await update.message.reply_text("Please enter a number.\nExample: /threshold 70")
+
+
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Example:\n/price BTC")
+        await update.message.reply_text("Example: /price BTC")
         return
 
     coin = context.args[0].upper()
@@ -215,7 +248,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Example:\n/score BTC")
+        await update.message.reply_text("Example: /score BTC")
         return
 
     coin = context.args[0].upper()
@@ -251,11 +284,13 @@ def main():
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("auto", auto))
     application.add_handler(CommandHandler("pairs", pairs))
+    application.add_handler(CommandHandler("risk", risk))
+    application.add_handler(CommandHandler("threshold", threshold))
     application.add_handler(CommandHandler("price", price))
     application.add_handler(CommandHandler("score", score))
     application.add_error_handler(error_handler)
 
-    logger.info("Bot starting with editable watchlist...")
+    logger.info("Bot starting with risk & threshold commands...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
